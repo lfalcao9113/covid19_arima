@@ -1,2 +1,2 @@
-# covid19_arima
-Usando auto arima para prever cenário de drescimento de casos em um cenário em que os comércios continuassem fechados no município de Sorocaba - SP
+# COVID-19 - Cenários sem mudança de política por meio do (auto) ARIMA
+Usando auto Arima para prever cenário de crescimento de casos em um cenário em que os comércios continuassem fechados no município de Sorocaba - SP. Não há nenhuma pretensão cientifica. 
