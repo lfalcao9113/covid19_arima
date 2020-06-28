@@ -1,0 +1,156 @@
+---
+title: "COVID-19 - Previsão usando (auto) ARIMA"
+output: html_notebook
+---
+
+Para descobrir o possível padrão de evolução do número de casos confirmados em um cenário em que não houvesse mudança de política é necessário utilizar um modelo estatístico ou de *machine learning* para "prever" o que teria acontecido nos dias seguintes a mudança de política levando-se em conta apenas os dados anteriores. Neste sentido, o modelo estatístico de séries temporais [ARIMA]( https://pt.wikipedia.org/wiki/ARIMA) (*AutoRegressive Integrated Moving Avarage*, ou modelo auto-regressivo integrado de médias móveis) é apropriada. A intuição geral é usar valores anteriores para explicar os valores atuais em uma série temporal (dados de uma variável distribuídas no tempo).
+
+
+# ARIMA
+## 1. Preparando os dados
+A implementação prática do modelo exige que os dados sejam convertidos em uma única coluna com a evolução doa varriável de interesse, no caso, os casos confirmados.
+
+```{r}
+## Limpando R
+rm(list=ls())
+
+## Importando dados de Sorocaba
+df = openxlsx::read.xlsx("C:/Users/oOluc/Downloads/Telegram Desktop/evolução-corona-sorocaba.xlsx")
+
+## Retirando informações complementares de uma segunda tabela na aba 1
+ultima_linha = which(is.na(df$CASOS.CONFIRMADOS))[1]-1
+df <- df[1:ultima_linha,]
+
+
+## Arrumadno data
+df$data <- as.Date(df$X2, origin = "1899-12-30")
+# Visualizando 5 primeiras datas
+df$data[1:5] #ok
+
+## Variável contando o dia
+df$dia <- df$data[1]
+df$dia <- as.numeric(df$data - df$dia)
+df$dia <- df$dia + 1
+# Visualizando 5 primeiros dias
+df$dia[1:5]
+
+## Qual dia houve mudança de política (1 de junho)?
+reabertura = df$dia[df$data == as.Date("2020-06-1")]
+
+## Subset: apenas a contagem de dias e casos confirmados
+df <- df[,c(33,3)]
+
+# Renomeando variáveis
+colnames(df) <- c("dia","confirmados")
+
+## Visualizando 5 primeiros
+df[1:5,]
+
+## Convertendo para tipo numérico
+df$confirmados <- as.numeric(df$confirmados)
+
+## Data frame não considerando os últimos dias em que teve mudança de política (1 de Junho)
+df0 <- df[1:which(df$dia == (reabertura-1)),]
+
+```
+
+## 2. Escolhendo melhor modelo
+Há um comando específico no R capaz de escolher os melhores parâmetros para os modelos ARIMA. São três parâmetros necessário:
+
+1. **p**: quantos valores defasados explicam o valor atual (casos passados nos *p* dias atrás explicam o número do dial de hoje, por exemplo);
+2. **d**: quantas vezes deve se subtrair os valores passados para que a série temporal seja estacionária (ou seja, subtrair *d* vezes os valores passados para a série seja uma 'reta', em que as variações sejam aleatórias).
+3. **q**: capta a evolução da média da série. 
+```{r}
+## Carrengo biblioteca com comando
+library(forecast)
+
+## aplicando
+modelo = auto.arima(df0$confirmados)
+modelo
+
+## Checando resíduos do modelo escolhido
+checkresiduals(modelo$residuals) #variância crescente (não sei se é ruído branco)
+```
+Os valores adequados encontrados para o parâmetro foram:
+
+ 1. $p = 0$;
+ 2. $d = 2$;
+ 3. e $q = 1$.
+ 
+Com o melhor modelo em mãos, podemos fazer a previsão para os dias de reabertura, com um intervalo de confiança de 95%:
+```{r}
+# Previsão
+# Quantos dias é necessário fazer a previsão? reabertura até último dia com dados
+n_dias_prev = nrow(df) - nrow(df0)
+
+previsao <- forecast(modelo, level=c(95), h=n_dias_prev)
+
+plot(previsao)
+```
+ 
+
+
+## 3. Gráfico
+
+Agora que temos os valores previstos para os dias em que houve reabertura caso essa política não fosse em prática é necessário fazer uma representação gráfica comparando o que poderia ter acontecido com o que de fato aconteceu. Para tanto, ao gráfico rudimentar da segunda seção deverá ser adicionado um segmento de linha com os números de casos confirmados a partir de 1 de Junho. 
+```{r}
+## Carregando o pacote de gráficos
+library(ggplot2)
+
+## Adequando os dados 
+# Adequando objeto com previsao
+prev = summary(previsao)
+df_prev = data.frame(dia = c(reabertura:nrow(df)),
+                     confirmados = prev$`Point Forecast`,
+                     ci_lower = prev$`Lo 95`,
+                     ci_upper = prev$`Hi 95`
+                     )
+
+# Criando variáveis com intervalos de confiança
+df$ci_lower = NA
+df$ci_upper = NA
+
+# Variável informando se é:
+#(i) antes da reabertura;
+df$Tipo = NA
+df$Tipo[1:(reabertura-1)] = "Antes da reabertura"
+#(ii) depois da abertura;
+df$Tipo[(reabertura):nrow(df)] = "Depois da reabertura"
+#e (iii) caso não houvesse reabertura.
+df_prev$Tipo = "Caso não houvesse reabertura"
+
+# Unindo em um único data frame
+df = rbind(df,df_prev)
+
+
+## Gráfico
+ p <- ggplot(df, aes(x=dia, y=confirmados, group=reorder(Tipo,confirmados))) +
+  geom_line(aes(linetype=reorder(Tipo,confirmados), color=reorder(Tipo,confirmados)),size = 1.5)  + scale_x_continuous(limits = c(0,100),breaks=c(seq(0,100,by=5))) + scale_y_continuous(limits = c(0,4100),breaks=c(seq(0,4000,by=500)))
+ 
+p <- p + ylab("Casos") +xlab("Dias (início: 24/03)")
+
+p <- p + geom_vline(xintercept = reabertura, size = 1, alpha = 0.7) + geom_text(aes(x=reabertura, label="Reabertura (1 de Junho)", y=20), colour="black", hjust = 0)
+
+p <- p + geom_ribbon(aes(ymin=ci_lower, ymax=ci_upper, fill = Tipo), alpha=0.2)
+
+p <- p +  scale_linetype_manual(values=c("solid", "solid", "solid")) + scale_color_manual(values=c('#990000','#0000FF','#FF3333')) +
+  scale_fill_manual(values=c('#990000','#0000FF','#FF3333'), guide = F)
+
+
+p <- p + ggtitle("Casos de COVID-19 confirmados em Sorocaba por dia") +
+  theme_minimal() +
+  theme(axis.title = element_text(size=14),
+        axis.text = element_text(size=12),
+        plot.title = element_text(size=14, face = "bold", hjust = 0.5),
+        legend.title = element_blank(),
+        legend.text = element_text(size=13),
+        legend.position = c(0.3,.75),
+        legend.key=element_blank(),
+        legend.background=element_blank())
+
+p
+
+## Exportando
+ggsave("C:/Users/oOluc/Dropbox/covid_diadema/sorocaba_previsao_covid.png",p, width=19, height=16, unit="cm", dpi=300)
+```
+
